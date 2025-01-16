@@ -52,9 +52,9 @@ func InitDB() (*gorm.DB, error) {
 		return nil, err
 	}
 
-	dsn := viper.GetString("bridge_db_config.dsn")
-	maxOpenNum := viper.GetInt("bridge_db_config.maxOpenNum")
-	maxIdleNum := viper.GetInt("bridge_db_config.maxIdleNum")
+	dsn := viper.GetString("db_config.dsn")
+	maxOpenNum := viper.GetInt("db_config.maxOpenNum")
+	maxIdleNum := viper.GetInt("db_config.maxIdleNum")
 
 	tmpGormLogger := gormLogger{
 		gethLogger: log.Root(),

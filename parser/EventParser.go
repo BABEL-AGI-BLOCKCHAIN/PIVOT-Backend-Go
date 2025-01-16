@@ -38,7 +38,7 @@ func FetchAndProcessEvents(nodeURL, contractAddress string, fromBlock, toBlock *
 	}
 	err = RawEventsOrm.InsertRawEvents(context.Background(), "raw_events", Events)
 	if err != nil {
-		return fmt.Errorf("failed to insert bridge events: %v", err)
+		return fmt.Errorf("failed to insert raw events: %v", err)
 	}
 	return nil
 }
