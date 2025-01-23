@@ -1,74 +1,69 @@
 package main
 
 import (
-	"fmt"
-	"log"
-	"math/big"
-	"time"
+	"context"
+	"os"
+	"os/signal"
+	"sync"
+	"syscall"
 
+	"github.com/BABEL-AGI-BLOCKCHAIN/PIVOT-Backend-Go/listener"
 	"github.com/BABEL-AGI-BLOCKCHAIN/PIVOT-Backend-Go/orm"
-	"github.com/BABEL-AGI-BLOCKCHAIN/PIVOT-Backend-Go/parser"
-
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/sirupsen/logrus"
+	"gorm.io/gorm"
 )
 
 const (
-	nodeURL        = ""
-	checkpointFile = "checkpoint.txt"
+	nodeURL = ""
 )
 
 var (
 	ContractABI *abi.ABI
 
 	EventSig common.Hash
-
-	ChainID = 11155111
-
-	ContractAddress = "0xB74D5Dba3081bCaDb5D4e1CC77Cc4807E1c4ecf8"
 )
 
 func main() {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	fromBlock := big.NewInt(2748098)
-	toBlock := big.NewInt(2800000)
-	blockStep := big.NewInt(300)
-	db, err := orm.InitDB()
+	var db *gorm.DB
+	var err error
+	db, err = orm.InitDB()
 	if err != nil {
-		log.Fatal("failed to init db", "err", err)
+		logrus.Fatal("failed to init db", "err", err)
 	}
-	err = db.Table("raw_events").AutoMigrate(&orm.RawEvents{})
-	if err != nil {
-		log.Fatal("failed to AutoMigrate db", "err", err)
-	}
-	defer orm.CloseDB(db)
-	rawEventsOrm := orm.NewRawEvents(db)
-	if err != nil {
-		log.Fatal("failed to init rawEventsOrm", "err", err)
-	}
-	ProcessBlocks(fromBlock, toBlock, blockStep, rawEventsOrm)
 
-}
+	Client, err := ethclient.Dial(nodeURL)
+	if err != nil {
+		logrus.Fatal("failed to connect to L1 geth", "endpoint", nodeURL, "err", err)
+	}
+	l1Watcher, err := listener.NewListener(ctx, Client, db)
+	if err != nil {
+		logrus.Fatal("init L1 client failed: ", err)
+	}
 
-// ProcessBlocks processes blocks in the specified range
-func ProcessBlocks(fromBlock, toBlock, blockStep *big.Int, rawEventsOrm *orm.RawEvents) {
-	for currentBlock := new(big.Int).Set(fromBlock); currentBlock.Cmp(toBlock) <= 0; {
-		endBlock := new(big.Int).Add(currentBlock, blockStep)
-		if endBlock.Cmp(toBlock) > 0 {
-			endBlock = toBlock
-		}
-		if endBlock.Cmp(currentBlock) <= 0 {
-			break
-		}
-		err := parser.FetchAndProcessEvents(nodeURL, ContractAddress, new(big.Int).Add(currentBlock, big.NewInt(1)), endBlock, rawEventsOrm)
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	go func() {
+		defer wg.Done()
+		err = l1Watcher.Run(ctx)
 		if err != nil {
-			fmt.Println("currentBlock", new(big.Int).Add(currentBlock, big.NewInt(1)))
-			fmt.Println("endBlock", endBlock)
-			log.Fatalf("Failed to subscribe and process events: %v", err)
+			logrus.Fatal("l1 client run failed: ", err)
 		}
-		fmt.Printf("Processed blocks from %s to %s\n", currentBlock.String(), endBlock.String())
+	}()
 
-		time.Sleep(2 * time.Second)
-		currentBlock = endBlock
-	}
+	// Handle OS signals to gracefully shutdown
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	<-sigCh
+
+	// Cancel the context to stop the listener
+	cancel()
+	wg.Wait()
+	logrus.Println("Program exited gracefully")
 }

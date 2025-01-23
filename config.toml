@@ -1,7 +1,9 @@
+[node_config]
+endpoint_address = ""
 
 
 [db_config]
-dsn = "user:123456@tcp(localhost:3306)/testdatabase?charset=utf8mb4&parseTime=True&loc=Local"
+dsn = ""
 driverName = "mysql"
 maxOpenNum = 10
 maxIdleNum = 5
