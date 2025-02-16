@@ -1,0 +1,18 @@
+{
+    "listener": {
+        "confirmation": 0,
+        "endpoint": "your-endpoint",
+        "startHeight": 7658466,
+        "blockTime": 12,
+        "fetchLimit": 5,
+        "TopicContractAddr": "0x9b764159249880e2d6B9a7F86495371c45aB69bC"
+
+    },
+    "db": {
+        "dsn": "testuser:123456@tcp(localhost:3306)/testdb?charset=utf8mb4&parseTime=True&loc=Local",
+        "driverName": "mysql",
+        "maxOpenNum": 200,
+        "maxIdleNum": 20
+    }
+ 
+}

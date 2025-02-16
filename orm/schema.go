@@ -7,15 +7,19 @@ const (
 	InternalServerError = 500
 )
 
-type TokenType int
-
-const (
-	ETH TokenType = iota
-	ERC20
-	ERC721
-	ERC1155
-)
-
 type EventType int
 
-const ()
+const (
+	EventTypeCreateTopic EventType = iota + 1
+	EventTypeInvest
+	EventTypeWithdraw
+	EventTypeWithdrawCommission
+)
+
+type ProcessStatus int
+
+const (
+	UnProcessed ProcessStatus = iota + 1
+	Processed
+	ProcessFailed
+)
