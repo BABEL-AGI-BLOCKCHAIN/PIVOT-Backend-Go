@@ -1,9 +1,0 @@
-[node_config]
-endpoint_address = ""
-
-
-[db_config]
-dsn = ""
-driverName = "mysql"
-maxOpenNum = 10
-maxIdleNum = 5

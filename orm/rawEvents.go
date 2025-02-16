@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sirupsen/logrus"
 	"gorm.io/gorm"
 )
 
@@ -47,29 +48,53 @@ func NewRawEvents(db *gorm.DB) *RawEvent {
 	return &RawEvent{db: db}
 }
 
-// InsertRawEvents inserts a new RawEvent record into the database.
-func (b *RawEvent) InsertRawEvents(ctx context.Context, tableName string, rawEvents []*RawEvent) error {
-	fmt.Printf("Inserting %d raw events into table %s\n", len(rawEvents), tableName)
+// InsertRawEvents inserts a new RawEvent record into the database using a transaction.
+func (b *RawEvent) InsertRawEvents(ctx context.Context, rawEvents []*RawEvent) error {
+	logrus.Info("InsertRawEvents ", " len ", len(rawEvents))
 	if len(rawEvents) == 0 {
 		return nil
 	}
-	db := b.db
-	db = db.WithContext(ctx)
-	db = db.Model(&RawEvent{})
-	db = db.Table(tableName)
-	// 'tx_status' column is not explicitly assigned during the update to prevent a later status from being overwritten back to "sent".
 
-	for _, event := range rawEvents {
-		if err := db.Create(event).Error; err != nil {
-			if isDuplicateEntryError(err) {
-				fmt.Printf("MessageNonce with hash %s already exists, skipping insert.\n", event.MessageNonce)
-				continue
+	return b.db.Transaction(func(tx *gorm.DB) error {
+		tx = tx.WithContext(ctx)
+		tx = tx.Model(&RawEvent{})
+
+		for _, event := range rawEvents {
+			if err := tx.Create(event).Error; err != nil {
+				if isDuplicateEntryError(err) {
+					logrus.Warn("duplicate entry ", " event ", event.TxHash)
+					continue
+				}
+				return fmt.Errorf("failed to insert message, error: %w", err)
 			}
-			return fmt.Errorf("failed to insert message, error: %w", err)
 		}
-	}
-	return nil
+		return nil
+	})
 }
 func isDuplicateEntryError(err error) bool {
 	return strings.Contains(err.Error(), "Error 1062")
+}
+func (b *RawEvent) GetUnProcessedEvents(ctx context.Context, limit int) ([]*RawEvent, error) {
+	db := b.db
+	db = db.WithContext(ctx)
+	db = db.Model(&RawEvent{})
+
+	var rawEvents []*RawEvent
+	if err := db.Where("process_status = ? ", UnProcessed).
+		Order("block_number ASC, message_nonce ASC").
+		Limit(limit).
+		Find(&rawEvents).Error; err != nil {
+		return nil, fmt.Errorf("failed to query unprocessed bridge events: %w", err)
+	}
+	return rawEvents, nil
+}
+
+func (r *RawEvent) GetMaxBlockNumber(ctx context.Context) (uint64, error) {
+	var maxBlockNumber uint64
+	db := r.db.WithContext(ctx)
+	err := db.Raw("SELECT COALESCE(MAX(block_number), 0) FROM raw_events").Scan(&maxBlockNumber).Error
+	if err != nil {
+		return 0, err
+	}
+	return maxBlockNumber, nil
 }

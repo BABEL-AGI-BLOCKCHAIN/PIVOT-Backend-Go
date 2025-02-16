@@ -2,17 +2,19 @@ package listener
 
 import (
 	"context"
-	"fmt"
 	"math/big"
+	"sync"
+	"time"
 
-	"github.com/BABEL-AGI-BLOCKCHAIN/PIVOT-Backend-Go/contract"
+	"github.com/BABEL-AGI-BLOCKCHAIN/PIVOT-Backend-Go/common/config"
+	"github.com/BABEL-AGI-BLOCKCHAIN/PIVOT-Backend-Go/logic"
 	"github.com/BABEL-AGI-BLOCKCHAIN/PIVOT-Backend-Go/orm"
-	"github.com/BABEL-AGI-BLOCKCHAIN/PIVOT-Backend-Go/parser"
+	"github.com/BABEL-AGI-BLOCKCHAIN/PIVOT-Backend-Go/utils"
+	"github.com/sirupsen/logrus"
 
-	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethclient"
-	"github.com/sirupsen/logrus"
+	"github.com/ethereum/go-ethereum/log"
 	"gorm.io/gorm"
 )
 
@@ -28,191 +30,128 @@ topic
 */
 const (
 	// EventTypeCreateTopic represents the event type for creating a topic.
-	contractAddress = "0x9Af4f4b7C831b0c79574CCDE7C04e33F99BF6438"
+	ReorgSafeDepth = 64
 )
 
 type Listener struct {
-	ctx context.Context
-	//cfg         *evm.GethConfig
-	Client       *ethclient.Client
-	Parser       *parser.Parser
-	rawEventsOrm *orm.RawEvent
+	ctx    context.Context
+	cfg    *config.ListenerConfig
+	client *ethclient.Client
+
+	fetcherLogic      *logic.FetcherLogic
+	syncHeight        uint64
+	lastSyncBlockHash common.Hash
+
+	eventUpdateLogic *logic.EventUpdateLogic
+	rawEventsOrm     *orm.RawEvent
+	mu               sync.Mutex // Add a mutex to ensure sequential execution
+
 }
 
-func NewListener(ctx context.Context, ethClient *ethclient.Client, db *gorm.DB) (*Listener, error) {
-
+func NewListener(ctx context.Context, cfg *config.ListenerConfig, ethClient *ethclient.Client, db *gorm.DB) (*Listener, error) {
 	c := &Listener{
-		ctx: ctx,
-		//cfg:                cfg,
-		Client:       ethClient,
-		Parser:       parser.NewParser(),
-		rawEventsOrm: orm.NewRawEvents(db),
+		ctx:              ctx,
+		cfg:              cfg,
+		client:           ethClient,
+		fetcherLogic:     logic.NewFetcherLogic(cfg, db, ethClient),
+		rawEventsOrm:     orm.NewRawEvents(db),
+		eventUpdateLogic: logic.NewEventUpdateLogic(db),
 	}
 	return c, nil
 }
 
-func (w *Listener) Run(ctx context.Context) error {
-	createTopicChan := make(chan *contract.PivotTopicCreateTopic)
-	investChan := make(chan *contract.PivotTopicInvest)
-	withdrawChan := make(chan *contract.PivotTopicWithdraw)
-	withdrawCommissionChan := make(chan *contract.PivotTopicWithdrawCommission)
+func (c *Listener) Start() {
+	messageSyncedHeight, dbErr := c.eventUpdateLogic.GetSyncHeight(c.ctx)
+	if dbErr != nil {
+		logrus.Fatal("failed to get sync height", "err", dbErr)
+	}
+	syncHeight := messageSyncedHeight
+	if syncHeight < ReorgSafeDepth {
+		syncHeight = 0
+	} else {
+		syncHeight -= ReorgSafeDepth
+	}
+	if c.cfg.StartHeight > syncHeight {
+		syncHeight = c.cfg.StartHeight - 1
+	}
 
-	if w.Client.Client().SupportsSubscriptions() {
-		filterer, err := contract.NewPivotTopicFilterer(common.HexToAddress(contractAddress), w.Client)
-		if err != nil {
-			return nil
-		}
+	// Sync from an older block to prevent reorg during restart.
 
-		createTopicSub, err := filterer.WatchCreateTopic(&bind.WatchOpts{Context: ctx}, createTopicChan, nil)
-		if err != nil {
-			return err
-		}
-		investSub, err := filterer.WatchInvest(&bind.WatchOpts{Context: ctx}, investChan, nil, nil)
-		if err != nil {
-			return err
-		}
-		withdrawSub, err := filterer.WatchWithdraw(&bind.WatchOpts{Context: ctx}, withdrawChan, nil)
-		if err != nil {
-			return err
-		}
-		withdrawCommissionSub, err := filterer.WatchWithdrawCommission(&bind.WatchOpts{Context: ctx}, withdrawCommissionChan, nil)
-		if err != nil {
-			return err
-		}
+	header, err := c.client.HeaderByNumber(c.ctx, new(big.Int).SetUint64(syncHeight))
+	if err != nil {
+		log.Crit("failed to get header by number", "block number", syncHeight, "err", err)
+		return
+	}
 
-		go func() {
-			defer createTopicSub.Unsubscribe()
-			defer investSub.Unsubscribe()
-			defer withdrawSub.Unsubscribe()
-			defer withdrawCommissionSub.Unsubscribe()
-			for {
-				fmt.Println("Listening for events...")
-				select {
-				case msg := <-createTopicChan:
-					fmt.Println("createTopicChan")
-					if msg == nil {
-						continue
-					}
-					w.handleCreateTopicMessage(msg)
+	c.updateSyncHeight(syncHeight, header.Hash())
 
-				case msg := <-investChan:
-					if msg == nil {
-						continue
-					}
-					w.handleInvestMessage(msg)
+	log.Info("Start message fetcher",
+		"message synced height", messageSyncedHeight,
+		"config start height", c.cfg.StartHeight,
+		"sync start height", c.syncHeight+1,
+	)
 
-				case msg := <-withdrawChan:
-					if msg == nil {
-						continue
-					}
-					w.handleWithdrawMessage(msg)
-
-				case msg := <-withdrawCommissionChan:
-					if msg == nil {
-						continue
-					}
-					w.handleWithdrawCommissionMessage(msg)
-				case subErr := <-createTopicSub.Err():
-					filterer, err := contract.NewPivotTopicFilterer(common.HexToAddress(contractAddress), w.Client)
-					logrus.Errorf("L1 createTopic subscription failed: %v, Resubscribing...", subErr)
-					createTopicSub, err = filterer.WatchCreateTopic(&bind.WatchOpts{Context: ctx}, createTopicChan, nil)
-					if err != nil {
-						logrus.Errorf("Resubscribe failed: %v", err)
-						return
-					}
-				case subErr := <-investSub.Err():
-					filterer, err := contract.NewPivotTopicFilterer(common.HexToAddress(contractAddress), w.Client)
-					logrus.Errorf("L1 invest subscription failed: %v, Resubscribing...", subErr)
-					investSub, err = filterer.WatchInvest(&bind.WatchOpts{Context: ctx}, investChan, nil, nil)
-					if err != nil {
-						logrus.Errorf("Resubscribe failed: %v", err)
-						return
-					}
-				case subErr := <-withdrawSub.Err():
-					filterer, err := contract.NewPivotTopicFilterer(common.HexToAddress(contractAddress), w.Client)
-					logrus.Errorf("L1 withdraw subscription failed: %v, Resubscribing...", subErr)
-					withdrawSub, err = filterer.WatchWithdraw(&bind.WatchOpts{Context: ctx}, withdrawChan, nil)
-					if err != nil {
-						logrus.Errorf("Resubscribe failed: %v", err)
-						return
-					}
-				case subErr := <-withdrawCommissionSub.Err():
-					filterer, err := contract.NewPivotTopicFilterer(common.HexToAddress(contractAddress), w.Client)
-					logrus.Errorf("L1 withdrawCommission subscription failed: %v, Resubscribing...", subErr)
-					withdrawCommissionSub, err = filterer.WatchWithdrawCommission(&bind.WatchOpts{Context: ctx}, withdrawCommissionChan, nil)
-					if err != nil {
-						logrus.Errorf("Resubscribe failed: %v", err)
-						return
-					}
-
-				case <-ctx.Done():
-					return
-				}
+	tick := time.NewTicker(time.Duration(c.cfg.BlockTime) * time.Second)
+	go func() {
+		for {
+			select {
+			case <-c.ctx.Done():
+				tick.Stop()
+				return
+			case <-tick.C:
+				c.mu.Lock() // Lock the mutex before starting the task
+				c.fetchAndSaveEvents(c.cfg.Confirmation)
+				c.mu.Unlock() // Unlock the mutex after the task is done
 			}
-		}()
-	}
-	return nil
+		}
+	}()
+}
+func (w *Listener) updateSyncHeight(height uint64, blockHash common.Hash) {
+	w.lastSyncBlockHash = blockHash
+	w.syncHeight = height
 }
 
-func (w *Listener) handleCreateTopicMessage(
-	msg *contract.PivotTopicCreateTopic,
-) error {
-	fmt.Println("handleCreateTopicMessage")
-	bridgeEvents, err := w.Parser.ParseCreateTopicEventToRawBridgeEvents(w.ctx, msg)
-	if err != nil {
-		logrus.Errorf("Failed to parse downward message: %v", err)
-	}
-	err = w.rawEventsOrm.InsertRawEvents(w.ctx, "raw_events", bridgeEvents)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-func (w *Listener) handleInvestMessage(
-	msg *contract.PivotTopicInvest,
-) error {
-	bridgeEvents, err := w.Parser.ParseInvestEventToRawBridgeEvents(w.ctx, msg)
-	if err != nil {
-		logrus.Errorf("Failed to parse invest message: %v", err)
-	}
-	err = w.rawEventsOrm.InsertRawEvents(w.ctx, "raw_events", bridgeEvents)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (w *Listener) handleWithdrawMessage(
-	msg *contract.PivotTopicWithdraw,
-) error {
-	bridgeEvents, err := w.Parser.ParseWithdrawEventToRawBridgeEvents(w.ctx, msg)
-	if err != nil {
-		logrus.Errorf("Failed to parse withdraw message: %v", err)
-	}
-	err = w.rawEventsOrm.InsertRawEvents(w.ctx, "raw_events", bridgeEvents)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (w *Listener) handleWithdrawCommissionMessage(
-	msg *contract.PivotTopicWithdrawCommission,
-) error {
-	bridgeEvents, err := w.Parser.ParseWithdrawCommissionEventToRawBridgeEvents(w.ctx, msg)
-	if err != nil {
-		logrus.Errorf("Failed to parse withdraw commission message: %v", err)
-	}
-	err = w.rawEventsOrm.InsertRawEvents(w.ctx, "raw_events", bridgeEvents)
-	if err != nil {
-		return err
-	}
-	return nil
-}
 func (w *Listener) ChainID(ctx context.Context) (*big.Int, error) {
-	return w.Client.ChainID(ctx)
+	return w.client.ChainID(ctx)
 }
 
 func (w *Listener) Close() {
-	w.Client.Close()
+	w.client.Close()
+}
+func (c *Listener) fetchAndSaveEvents(confirmation uint64) {
+	startHeight := c.syncHeight + 1
+	endHeight, rpcErr := utils.GetBlockNumber(c.ctx, c.client, confirmation)
+	if rpcErr != nil {
+		logrus.Error("failed to get block number", " confirmation ", confirmation, " err ", rpcErr)
+		return
+	}
+
+	logrus.Info("fetch and save missing events, ", "start height: ", startHeight, " , end height: ", endHeight, " confirmation: ", confirmation)
+
+	for from := startHeight; from <= endHeight; from += c.cfg.FetchLimit {
+		to := from + c.cfg.FetchLimit - 1
+		if to > endHeight {
+			to = endHeight
+		}
+		time.Sleep(2 * time.Second)
+
+		isReorg, resyncHeight, lastBlockHash, l1FetcherResult, fetcherErr := c.fetcherLogic.Fetcher(c.ctx, from, to, c.lastSyncBlockHash)
+		if fetcherErr != nil {
+			logrus.Error("failed to fetch events ", "from ", from, " to ", to, " err ", fetcherErr)
+			return
+		}
+
+		if isReorg {
+			logrus.Warn("reorg happened, resync  events: ", "from", from, " to", to, " resync height ", resyncHeight, " last block hash ", lastBlockHash)
+			c.updateSyncHeight(resyncHeight, lastBlockHash)
+			return
+		}
+
+		if insertUpdateErr := c.eventUpdateLogic.InsertRawEvents(c.ctx, l1FetcherResult); insertUpdateErr != nil {
+			logrus.Error("failed to save events ", "from ", from, " to ", to, " err ", insertUpdateErr)
+			return
+		}
+
+		c.updateSyncHeight(to, lastBlockHash)
+	}
 }
