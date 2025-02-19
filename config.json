@@ -1,7 +1,7 @@
 {
     "listener": {
         "confirmation": 0,
-        "endpoint": "wss://sepolia.infura.io/ws/v3/80b72ad34e16495595abeb6ccc30255a",
+        "endpoint": "your endpoint",
         "startHeight": 7733081,
         "blockTime": 12,
         "fetchLimit": 5,
