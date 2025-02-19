@@ -40,6 +40,7 @@ type PivotTopicCreateTopic struct {
 	TokenAddress common.Address
 	Nonce        *big.Int
 	Raw          types.Log // Blockchain specific contextual infos
+
 }
 type PivotTopicInvest struct {
 	Investor common.Address

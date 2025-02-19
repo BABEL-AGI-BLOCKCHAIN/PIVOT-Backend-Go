@@ -107,6 +107,7 @@ func (e *EventParser) ParseSingleRawBridgeEventLogs(ctx context.Context, logs []
 				EventType:       int(types.CreateTopic),
 				ChainID:         types.Sepolia,
 				ContractAddress: e.cfg.TopicContractAddr,
+
 				TxHash:          vlog.TxHash.String(),
 				Timestamp:       uint64(time.Now().Unix()),
 				BlockNumber:     vlog.BlockNumber,
