@@ -106,13 +106,14 @@ func (e *EventParser) ParseSingleRawBridgeEventLogs(ctx context.Context, logs []
 			rawEvent := &orm.RawEvent{
 				EventType:       int(types.CreateTopic),
 				ChainID:         types.Sepolia,
-				ContractAddress: types.ContractAddress,
+				ContractAddress: e.cfg.TopicContractAddr,
 				TxHash:          vlog.TxHash.String(),
 				Timestamp:       uint64(time.Now().Unix()),
 				BlockNumber:     vlog.BlockNumber,
 				MessageTopicId:  event.TopicId.Uint64(),
 				Sender:          event.Promoter.String(),
 				MessageSender:   event.Promoter.String(),
+				TokenAddress:    event.TokenAddress.String(),
 				MessageAmount:   int(event.Investment.Int64()),
 				MessagePosition: int(event.Position.Int64()),
 				MessageNonce:    int(event.Nonce.Int64()),
@@ -123,7 +124,7 @@ func (e *EventParser) ParseSingleRawBridgeEventLogs(ctx context.Context, logs []
 			createTopicEvents = append(createTopicEvents, rawEvent)
 
 		case backendabi.InvestEventSig:
-			logrus.Info("Found CreateTopicEventSig")
+			logrus.Info("Found InvestEventSig")
 			event := backendabi.PivotTopicInvest{}
 			if err := utils.UnpackLog(backendabi.IPivotTopicABI, &event, "Invest", vlog); err != nil {
 				log.Error("Failed to unpack Invest event", "err", err)
@@ -133,7 +134,7 @@ func (e *EventParser) ParseSingleRawBridgeEventLogs(ctx context.Context, logs []
 			rawEvent := &orm.RawEvent{
 				EventType:       int(types.Invest),
 				ChainID:         types.Sepolia,
-				ContractAddress: types.ContractAddress,
+				ContractAddress: e.cfg.TopicContractAddr,
 				TxHash:          vlog.TxHash.String(),
 				Timestamp:       uint64(time.Now().Unix()),
 				BlockNumber:     vlog.BlockNumber,
@@ -159,7 +160,7 @@ func (e *EventParser) ParseSingleRawBridgeEventLogs(ctx context.Context, logs []
 			rawEvent := &orm.RawEvent{
 				EventType:         int(types.Withdraw),
 				ChainID:           types.Sepolia,
-				ContractAddress:   types.ContractAddress,
+				ContractAddress:   e.cfg.TopicContractAddr,
 				TxHash:            vlog.TxHash.String(),
 				Timestamp:         uint64(time.Now().Unix()),
 				BlockNumber:       vlog.BlockNumber,
@@ -182,7 +183,7 @@ func (e *EventParser) ParseSingleRawBridgeEventLogs(ctx context.Context, logs []
 			rawEvent := &orm.RawEvent{
 				EventType:       int(types.WithdrawCommission),
 				ChainID:         types.Sepolia,
-				ContractAddress: types.ContractAddress,
+				ContractAddress: e.cfg.TopicContractAddr,
 				TxHash:          vlog.TxHash.String(),
 				Timestamp:       uint64(time.Now().Unix()),
 				BlockNumber:     vlog.BlockNumber,
