@@ -1,8 +1,6 @@
 package types
 
 const (
-	ContractAddress = "0x9Af4f4b7C831b0c79574CCDE7C04e33F99BF6438"
-
 	Sepolia = 11155111
 	// Success indicates that the operation was successful.
 	Success = 0
