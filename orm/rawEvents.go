@@ -3,7 +3,6 @@ package orm
 import (
 	"context"
 	"fmt"
-	"math/big"
 	"strings"
 	"time"
 
@@ -29,7 +28,7 @@ type RawEvent struct {
 	MessagePosition   int        `json:"message_position" gorm:"column:message_position"`
 	MessageNonce      int        `json:"message_nonce" gorm:"column:message_nonce;unique"`
 	MessageWithdrawTo string     `json:"message_withdrawto" gorm:"column:message_withdrawto"`
-	MessageAmount     *big.Int   `json:"message_amount" gorm:"column:message_amount"`
+	MessageAmount     string     `json:"message_amount" gorm:"column:message_amount"`
 	CreatedAt         time.Time  `json:"created_at" gorm:"column:created_at"`
 	UpdatedAt         time.Time  `json:"updated_at" gorm:"column:updated_at"`
 	DeletedAt         *time.Time `json:"deleted_at" gorm:"column:deleted_at"`
