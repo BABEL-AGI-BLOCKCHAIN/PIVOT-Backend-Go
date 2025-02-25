@@ -1,11 +1,12 @@
 {
     "listener": {
         "confirmation": 0,
-        "endpoint": "your-endpoint",
-        "startHeight": 7658466,
+        "endpoint": "",
+        "startHeight": 7740913,
         "blockTime": 12,
-        "fetchLimit": 5,
-        "TopicContractAddr": "0x9b764159249880e2d6B9a7F86495371c45aB69bC"
+        "fetchLimit": 50,
+        "TopicContractAddr": "0x891F9488fDAb011Bc0B330E02b512d47Ce6D71A7"
+
 
     },
     "db": {
