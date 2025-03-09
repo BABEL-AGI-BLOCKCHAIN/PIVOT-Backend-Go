@@ -1,24 +1,32 @@
-package main
+package app
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/BABEL-AGI-BLOCKCHAIN/PIVOT-Backend-Go/common/config"
 	"github.com/BABEL-AGI-BLOCKCHAIN/PIVOT-Backend-Go/common/database"
+	"github.com/BABEL-AGI-BLOCKCHAIN/PIVOT-Backend-Go/controller/api"
+	"github.com/BABEL-AGI-BLOCKCHAIN/PIVOT-Backend-Go/controller/route"
 	"github.com/BABEL-AGI-BLOCKCHAIN/PIVOT-Backend-Go/listener"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
+	cli "github.com/urfave/cli/v2"
 	"gorm.io/gorm"
 )
+
+var app *cli.App
 
 const (
 	cfgFile = "config.json"
 )
 
-func main() {
+// Run bridge-history-backend api cmd instance.
+func Run() {
 	logrus.Info("start the server")
 	var err error
 	ctx, cancel := context.WithCancel(context.Background())
@@ -51,7 +59,7 @@ func main() {
 	// Create a channel to listen for OS signals
 	sigint := make(chan os.Signal, 1)
 	signal.Notify(sigint, syscall.SIGINT, syscall.SIGTERM)
-
+	StartupRpc(cfg, db)
 	// Block until a signal is received
 	select {
 	case <-sigint:
@@ -59,4 +67,17 @@ func main() {
 		cancel()         // Cancel the context to stop the listener
 		listener.Close() // Assuming you have a Stop method to gracefully stop the listener
 	}
+}
+func StartupRpc(cfg *config.Config, db *gorm.DB) {
+	api.InitController(db)
+
+	router := gin.Default()
+	route.Route(router)
+
+	go func() {
+		port := cfg.Rpc.Port
+		if runServerErr := router.Run(fmt.Sprintf(":%s", port)); runServerErr != nil {
+			logrus.Fatal("run http server failure", "error", runServerErr)
+		}
+	}()
 }

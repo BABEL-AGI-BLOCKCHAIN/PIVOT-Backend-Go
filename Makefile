@@ -1,7 +1,7 @@
 .PHONY: all build run clean
 
 build:
-	go build -o run main.go
+	go build -o run ./cmd/main.go
 
 run: build
 	./run
