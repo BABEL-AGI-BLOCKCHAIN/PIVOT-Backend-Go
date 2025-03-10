@@ -28,7 +28,13 @@ type ListenerConfig struct {
 	SBTContractAddr   string `json:"SBTContractAddr"`
 }
 
+// RpcConfig is the configuration of rpc.
+type RpcConfig struct {
+	Port string `json:"port"`
+}
+
 type Config struct {
+	Rpc      *RpcConfig      `json:"rpc"`
 	Listener *ListenerConfig `json:"listener"`
 	DB       database.Config `json:"db"`
 }
